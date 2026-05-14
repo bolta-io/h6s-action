@@ -1,0 +1,30 @@
+# 수집 결과를 GitHub Artifact 로 90일간 보존.
+# Repo 에 commit 하지 않고 별도 보존만 필요한 경우 (감사·재실행·로컬 다운로드 용도).
+name: 수집 결과 Artifact 보존
+
+on:
+  schedule:
+    - cron: '0 0 1 * *'   # 매월 1일
+  workflow_dispatch: {}
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - id: prev-month
+        run: echo "value=$(date -u -d '1 month ago' +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      - id: fetch
+        uses: bolta-io/h6s-action@v0
+        with:
+          api-key: ${{ secrets.H6S_API_KEY }}
+          schema: bank.transactions.cb.v1
+          provider: ibk_bank
+          month: ${{ steps.prev-month.outputs.value }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h6s-bank-${{ steps.prev-month.outputs.value }}
+          path: ${{ steps.fetch.outputs.path }}
+          retention-days: 90
+          if-no-files-found: error
