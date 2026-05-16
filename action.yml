@@ -1,0 +1,95 @@
+name: 'headless Fetch'
+description: '홈택스/은행/카드 거래 데이터를 headless 로 수집해 파일로 떨군다 (CSV 기본).'
+author: 'Bolta.io'
+branding:
+  icon: 'download-cloud'
+  color: 'blue'
+
+inputs:
+  api-key:
+    description: 'headless Open API key. 워크플로우에서는 secrets.H6S_API_KEY 를 넘기는 것을 권장.'
+    required: true
+  schema:
+    description: '수집 대상 schema id (예: bank.transactions.cb.v1, hometax.tax-invoices.sales.v1).'
+    required: true
+  provider:
+    description: 'providerCode (예: ibk_bank, kb_bank, hometax). credential 은 콘솔에 등록된 것 중 이 provider 에 매칭되는 1개가 자동으로 선택된다.'
+    required: true
+  month:
+    description: '수집 기간을 한 달 단위로 지정 (YYYY-MM). 1일 ~ 말일을 dateRangeStart/End 로 사용.'
+    required: false
+    default: ''
+  from:
+    description: 'dateRangeStart (YYYY-MM-DD). to 와 함께 사용.'
+    required: false
+    default: ''
+  to:
+    description: 'dateRangeEnd (YYYY-MM-DD). from 과 함께 사용.'
+    required: false
+    default: ''
+  params:
+    description: 'schema request 필드를 JSON 객체로 한 번에 전달 (multiline). month/from/to 와 병행 가능.'
+    required: false
+    default: ''
+  output-format:
+    description: '저장 포맷. csv (서버측, UTF-8 BOM + 한국어 헤더) | json | jsonl | markdown | yaml.'
+    required: false
+    default: 'csv'
+  output-path:
+    description: '저장 위치. 디렉터리(끝 / 또는 기존 dir)면 자동 파일명, 그 외엔 그대로 파일 경로.'
+    required: false
+    default: './out/'
+  cli-version:
+    description: '@h6s-ai/cli 버전. 비워두면 액션 태그와 동기화된 버전 사용 (권장).'
+    required: false
+    default: ''
+  timeout:
+    description: 'data-job 폴링 타임아웃 (예: 30m, 1h).'
+    required: false
+    default: '30m'
+  node-version:
+    description: 'setup-node 가 자동 호출될 때 사용할 Node 버전. 호출자가 이미 setup-node 했다면 skip-node-setup: true.'
+    required: false
+    default: '20'
+  skip-node-setup:
+    description: '호출자가 이미 actions/setup-node 를 실행했다면 true 로 둬서 중복 설치 방지.'
+    required: false
+    default: 'false'
+
+outputs:
+  path:
+    description: '저장된 결과 파일의 절대 경로.'
+    value: ${{ steps.run.outputs.path }}
+  count:
+    description: '수집 레코드 수 (succeededRecordCount).'
+    value: ${{ steps.run.outputs.count }}
+  job-id:
+    description: 'data-job UUID. 콘솔에서 동일 잡 조회 가능.'
+    value: ${{ steps.run.outputs.job-id }}
+  summary:
+    description: '한 줄 요약. Slack/Discord 메시지나 PR 제목에 그대로 끼울 수 있음.'
+    value: ${{ steps.run.outputs.summary }}
+
+runs:
+  using: composite
+  steps:
+    - if: inputs.skip-node-setup != 'true'
+      uses: actions/setup-node@v6
+      with:
+        node-version: ${{ inputs.node-version }}
+    - id: run
+      shell: bash
+      env:
+        H6S_API_KEY: ${{ inputs.api-key }}
+        ACTION_PATH: ${{ github.action_path }}
+        INPUT_SCHEMA: ${{ inputs.schema }}
+        INPUT_PROVIDER: ${{ inputs.provider }}
+        INPUT_MONTH: ${{ inputs.month }}
+        INPUT_FROM: ${{ inputs.from }}
+        INPUT_TO: ${{ inputs.to }}
+        INPUT_PARAMS: ${{ inputs.params }}
+        INPUT_OUTPUT_FORMAT: ${{ inputs.output-format }}
+        INPUT_OUTPUT_PATH: ${{ inputs.output-path }}
+        INPUT_CLI_VERSION: ${{ inputs.cli-version }}
+        INPUT_TIMEOUT: ${{ inputs.timeout }}
+      run: bash "$ACTION_PATH/scripts/run.sh"
