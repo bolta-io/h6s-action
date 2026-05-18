@@ -1,0 +1,81 @@
+# 매주 월요일 (KST 09:00), 은행 입출금내역 + 매출/매입 세금계산서 + 현금영수증을 병렬 수집.
+# matrix 로 한 워크플로우에서 6개 schema 를 동시에 처리하고 한 PR 에 모은다.
+name: 주간 다종 데이터 수집
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'   # 매주 월요일 00:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false    # 한 schema 실패해도 나머지는 진행
+      matrix:
+        include:
+          - schema: bank.transactions.cb.v1
+            provider: CB_IBK
+            dir: data/bank/
+          - schema: hometax.tax-invoices.sales.v1
+            provider: HOMETAX
+            dir: data/hometax/sales/
+          - schema: hometax.tax-invoices.purchase.v1
+            provider: HOMETAX
+            dir: data/hometax/purchase/
+          - schema: hometax.cash-receipts.sales.v1
+            provider: HOMETAX
+            dir: data/hometax/cash-receipts-sales/
+          - schema: hometax.cash-receipts.purchase.v1
+            provider: HOMETAX
+            dir: data/hometax/cash-receipts-purchase/
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: prev-week
+        run: |
+          echo "from=$(date -u -d '7 days ago' +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          echo "to=$(date -u -d 'yesterday' +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - id: fetch
+        uses: bolta-io/h6s-action@v0
+        with:
+          api-key: ${{ secrets.H6S_API_KEY }}
+          schema: ${{ matrix.schema }}
+          provider: ${{ matrix.provider }}
+          from: ${{ steps.prev-week.outputs.from }}
+          to: ${{ steps.prev-week.outputs.to }}
+          output-path: ${{ matrix.dir }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.schema }}
+          path: ${{ steps.fetch.outputs.path }}
+          retention-days: 7
+
+  collect:
+    needs: fetch
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          path: ./incoming/
+      - name: 디렉터리로 재배치
+        run: |
+          mkdir -p data/bank data/hometax/{sales,purchase,cash-receipts-sales,cash-receipts-purchase}
+          cp -R incoming/bank.transactions.cb.v1/*.csv data/bank/ 2>/dev/null || true
+          cp -R incoming/hometax.tax-invoices.sales.v1/*.csv data/hometax/sales/ 2>/dev/null || true
+          cp -R incoming/hometax.tax-invoices.purchase.v1/*.csv data/hometax/purchase/ 2>/dev/null || true
+          cp -R incoming/hometax.cash-receipts.sales.v1/*.csv data/hometax/cash-receipts-sales/ 2>/dev/null || true
+          cp -R incoming/hometax.cash-receipts.purchase.v1/*.csv data/hometax/cash-receipts-purchase/ 2>/dev/null || true
+      - uses: peter-evans/create-pull-request@v6
+        with:
+          title: 'data: 주간 수집 ${{ github.run_number }}'
+          branch: data/weekly-${{ github.run_id }}
+          commit-message: 'feat(data): 주간 다종 수집'
+          add-paths: data/
