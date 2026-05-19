@@ -1,0 +1,46 @@
+# 여러 금융기관(provider) 의 입출금내역을 병렬로 수집.
+# 본 계좌 + 마이크로 그랜트·피지컬 스폰서십용 분리 계좌가 다른 은행에 있는 경우의 표준 패턴.
+# provider 만 주면 각 기관에 매칭되는 credential 또는 공동인증서를 백엔드가 자동 선택.
+name: 다중 기관 병렬 수집
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'   # 매주 월요일
+  workflow_dispatch: {}
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      matrix:
+        provider:
+          - CB_IBK      # 본 계좌 (기업은행)
+          - CB_KB       # 마이크로 그랜트 분리 계좌
+          - CB_SHINHAN  # 피지컬 스폰서십 분리 계좌
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: prev-week
+        run: |
+          echo "from=$(date -u -d '7 days ago' +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          echo "to=$(date -u -d 'yesterday' +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - id: fetch
+        uses: bolta-io/h6s-action@v0
+        with:
+          api-key: ${{ secrets.H6S_API_KEY }}
+          schema: bank.transactions.cb.v1
+          provider: ${{ matrix.provider }}
+          from: ${{ steps.prev-week.outputs.from }}
+          to: ${{ steps.prev-week.outputs.to }}
+          output-path: ./data/bank/${{ matrix.provider }}/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bank-${{ matrix.provider }}
+          path: ${{ steps.fetch.outputs.path }}
+          retention-days: 30

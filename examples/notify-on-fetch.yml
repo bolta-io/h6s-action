@@ -1,0 +1,44 @@
+# 입출금내역 수집 후 Slack 채널로 한 줄 요약을 보낸다.
+# Discord 등 다른 채널도 outputs.summary / outputs.count 를 그대로 끼우면 동일하게 동작한다.
+name: 수집 후 Slack 알림
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'   # 매주 월요일
+  workflow_dispatch: {}
+
+jobs:
+  fetch-and-notify:
+    runs-on: ubuntu-latest
+    steps:
+      - id: fetch
+        uses: bolta-io/h6s-action@v0
+        with:
+          api-key: ${{ secrets.H6S_API_KEY }}
+          schema: bank.transactions.cb.v1
+          provider: CB_IBK
+          from: ${{ vars.FETCH_FROM }}
+          to: ${{ vars.FETCH_TO }}
+
+      - name: Slack 알림 (성공)
+        if: success()
+        uses: slackapi/slack-github-action@v1
+        with:
+          channel-id: ${{ vars.SLACK_CHANNEL_ID }}
+          slack-message: |
+            ✅ headless 수집 완료
+            ${{ steps.fetch.outputs.summary }}
+            Job: `${{ steps.fetch.outputs.job-id }}`
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+
+      - name: Slack 알림 (실패)
+        if: failure()
+        uses: slackapi/slack-github-action@v1
+        with:
+          channel-id: ${{ vars.SLACK_CHANNEL_ID }}
+          slack-message: |
+            ❌ headless 수집 실패 — workflow run ${{ github.run_id }}
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
