@@ -1,0 +1,46 @@
+# 매주 월요일 (한국시간 09:00) 지난 7일치 법인카드 승인내역을 수집해 PR 로 올린다.
+# 승인 시점 거래(매입 처리 전 단계 포함)라 지출을 거의 실시간으로 모니터링할 수 있다.
+name: 법인카드 승인내역 주간 수집 (지출 모니터링)
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'   # 매주 월요일 00:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: window
+        run: |
+          echo "from=$(date -u -d '7 days ago' +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          echo "to=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - id: fetch
+        uses: bolta-io/h6s-action@v0
+        with:
+          api-key: ${{ secrets.H6S_API_KEY }}
+          schema: card.approvals.corp.v1
+          provider: CCD_SHINHAN
+          from: ${{ steps.window.outputs.from }}
+          to: ${{ steps.window.outputs.to }}
+          output-path: ./data/card/
+
+      - uses: peter-evans/create-pull-request@v6
+        with:
+          title: '법인카드 승인내역 ${{ steps.fetch.outputs.summary }}'
+          body: |
+            자동 수집된 법인카드 승인내역 PR.
+
+            - Schema: `card.approvals.corp.v1`
+            - 기간: ${{ steps.window.outputs.from }} ~ ${{ steps.window.outputs.to }}
+            - 레코드 수: ${{ steps.fetch.outputs.count }}
+            - Job ID: `${{ steps.fetch.outputs.job-id }}`
+          branch: data/card-${{ steps.fetch.outputs.job-id }}
+          commit-message: 'feat(data): 법인카드 승인내역 ${{ steps.window.outputs.from }}~${{ steps.window.outputs.to }}'
+          add-paths: data/
