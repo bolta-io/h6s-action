@@ -1,0 +1,43 @@
+# 매월 1일 (한국시간 09:00) 전월 입출금내역을 IBK 기업은행에서 수집해 PR 로 올린다.
+# plain-text accounting (beancount/hledger/aceledger) 워크플로우의 표준 진입점.
+name: 입출금내역 매월 수집 (IBK)
+
+on:
+  schedule:
+    - cron: '0 0 1 * *'   # 매월 1일 00:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: prev-month
+        run: echo "value=$(date -u -d '1 month ago' +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      - id: fetch
+        uses: bolta-io/h6s-action@v2
+        with:
+          api-key: ${{ secrets.H6S_API_KEY }}
+          schema: bank.transactions.cb.v1
+          provider: CB_IBK
+          month: ${{ steps.prev-month.outputs.value }}
+          output-path: ./data/bank/
+
+      - uses: peter-evans/create-pull-request@v6
+        with:
+          title: '입출금내역 ${{ steps.fetch.outputs.summary }}'
+          body: |
+            자동 수집된 입출금내역 PR.
+
+            - Schema: `bank.transactions.cb.v1`
+            - 기간: ${{ steps.prev-month.outputs.value }}
+            - 레코드 수: ${{ steps.fetch.outputs.count }}
+            - Job ID: `${{ steps.fetch.outputs.job-id }}`
+          branch: data/bank-${{ steps.fetch.outputs.job-id }}
+          commit-message: 'feat(data): ${{ steps.prev-month.outputs.value }} 입출금내역'
+          add-paths: data/
