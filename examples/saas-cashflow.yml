@@ -1,0 +1,65 @@
+# 매주 월요일 09:00 KST 에 지난 주 net 캐시 변화를 지정한 슬랙 채널에 한 줄로.
+# 4주 평균 번과 추정 runway 까지 같이.
+# 잔액 추정은 vars.SAAS_OPERATING_BALANCE 에 운영자가 매주 입력 (또는 추가 step 으로 잔액 fetch).
+name: SaaS 주간 번/런웨이 Slack
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'   # 매주 월요일 00:00 UTC (KST 09:00)
+  workflow_dispatch: {}
+
+jobs:
+  cashflow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: prev-week
+        run: |
+          MON=$(date -u -d 'last monday -7 days' +%Y-%m-%d)
+          SUN=$(date -u -d "$MON +6 days" +%Y-%m-%d)
+          WEEK=$(date -u -d "$MON" +%G-W%V)
+          echo "mon=${MON}"   >> "$GITHUB_OUTPUT"
+          echo "sun=${SUN}"   >> "$GITHUB_OUTPUT"
+          echo "week=${WEEK}" >> "$GITHUB_OUTPUT"
+
+      - id: fetch
+        uses: bolta-io/h6s-action@v2
+        with:
+          api-key: ${{ secrets.H6S_API_KEY }}
+          schema: bank.transactions.cb.v1
+          provider: CB_KB
+          from: ${{ steps.prev-week.outputs.mon }}
+          to: ${{ steps.prev-week.outputs.sun }}
+
+      - name: net/번/runway 계산
+        id: cashflow
+        run: |
+          # 호출자 repo 의 scripts/saas-cashflow.mjs 로 위임.
+          # 출력: net_change, weekly_burn_4w_avg, runway_months
+          node scripts/saas-cashflow.mjs \
+            --bank ${{ steps.fetch.outputs.path }} \
+            --balance ${{ vars.SAAS_OPERATING_BALANCE }} \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Slack 알림
+        if: success()
+        uses: slackapi/slack-github-action@v1
+        with:
+          channel-id: ${{ vars.SLACK_CHANNEL_ID }}
+          slack-message: |
+            📊 주간 캐시 · ${{ steps.prev-week.outputs.week }}
+            Net 변화 ${{ steps.cashflow.outputs.net_change }}
+            누적 번(4주 평균) ${{ steps.cashflow.outputs.weekly_burn_4w_avg }} · runway 약 ${{ steps.cashflow.outputs.runway_months }}개월
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+
+      - name: Slack 실패 알림
+        if: failure()
+        uses: slackapi/slack-github-action@v1
+        with:
+          channel-id: ${{ vars.SLACK_CHANNEL_ID }}
+          slack-message: |
+            ❌ 주간 캐시 수집 실패 — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
