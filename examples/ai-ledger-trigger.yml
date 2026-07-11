@@ -1,0 +1,55 @@
+# 수집 → Claude Code Action 으로 ledger 전표 자동 작성 → PR.
+# plain-text accounting 워크플로우를 수집부터 전표 작성까지 자동화.
+#
+# 사전 준비:
+#   - secrets.ANTHROPIC_API_KEY  (Claude API key)
+#   - repo 의 ledger/ 디렉터리에 기존 전표 + AGENT 가이드(LEDGER.md)
+name: 수집 + AI 전표 작성
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'   # 매주 월요일
+  workflow_dispatch: {}
+
+jobs:
+  fetch-and-write-ledger:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: prev-week
+        run: |
+          echo "from=$(date -u -d '7 days ago' +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          echo "to=$(date -u -d 'yesterday' +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - id: fetch
+        uses: bolta-io/h6s-action@v2
+        with:
+          api-key: ${{ secrets.H6S_API_KEY }}
+          schema: bank.transactions.cb.v1
+          provider: CB_IBK
+          from: ${{ steps.prev-week.outputs.from }}
+          to: ${{ steps.prev-week.outputs.to }}
+          output-path: ./incoming/bank/
+
+      # Claude Code Action 이 LEDGER.md 의 가이드를 읽고
+      # incoming/bank/ 의 CSV 를 ledger 저널 파일에 자동 추가.
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct-prompt: |
+            ./incoming/bank/ 의 새 CSV 파일을 읽어 ledger/journal/${{ steps.prev-week.outputs.to }}.beancount 에
+            전표를 추가해줘. LEDGER.md 가이드를 따라 계정 분류·적요·증빙을 작성.
+            대차 정합성 검증을 통과해야 한다. 작성이 끝나면 incoming/ 디렉터리는 비워줘.
+
+      - uses: peter-evans/create-pull-request@v6
+        with:
+          title: 'ledger: 주간 전표 ${{ steps.fetch.outputs.summary }}'
+          branch: ledger/weekly-${{ steps.fetch.outputs.job-id }}
+          commit-message: 'feat(ledger): 주간 전표 자동 작성'
+          add-paths: |
+            ledger/
+            incoming/
